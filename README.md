@@ -1,4 +1,3 @@
-
 # 🧪 Guide d’Installation — Lab DevSecOps avec k3s + Helm
 
 > ✅ **100% Open Source**  
@@ -26,7 +25,7 @@
 
 ## 🚀 Étape 1 — Préparer le Système Ubuntu
 
-```bash
+```
 # Mettre à jour le système
 sudo apt update && sudo apt upgrade -y
 
@@ -54,8 +53,10 @@ net.ipv4.ip_forward                 = 1
 EOF
 
 sudo sysctl --system
-🐄 Étape 2 — Installer k3s (Lightweight Kubernetes)
-
+```
+--- 
+## 🐄 Étape 2 — Installer k3s (Lightweight Kubernetes)
+```
 # Installer k3s en mode "single node" avec Traefik désactivé
 curl -sfL https://get.k3s.io | INSTALL_K3S_EXEC="--disable traefik --disable metrics-server" sh -
 
@@ -69,10 +70,11 @@ sudo chown $USER:$USER ~/.kube/config
 
 # Vérifier que kubectl fonctionne
 kubectl get nodes
+```
 ✅ Vous devriez voir un nœud Ready. 
-
-📦 Étape 3 — Installer Helm
-
+--- 
+## 📦 Étape 3 — Installer Helm
+```
 # Télécharger et installer Helm
 curl https://raw.githubusercontent.com/helm/helm/main/scripts/get-helm-3 | bash
 
@@ -109,7 +111,8 @@ helm upgrade --install gitlab gitlab/gitlab \
 
 # Suivre le déploiement
 kubectl get pods -n gitlab -w
-🌐 Accès : 
+
+## 🌐 Accès : 
 
 URL : http://gitlab.localhost
 Ajoutez dans /etc/hosts :
@@ -118,9 +121,10 @@ echo "127.0.0.1 gitlab.localhost" | sudo tee -a /etc/hosts
 
 🔐 Mot de passe root : 
 kubectl get secret gitlab-gitlab-initial-root-password -n gitlab -ojsonpath='{.data.password}' | base64 -d ; echo
+```
 
-📊 Étape 6 — Déployer la Stack PLG (Prometheus + Loki + Grafana)
-
+## 📊 Étape 6 — Déployer la Stack PLG (Prometheus + Loki + Grafana)
+```
 # Créer un namespace
 kubectl create namespace monitoring
 
@@ -157,8 +161,10 @@ echo "User: admin | Pass: Admin123!"
 
 Prometheus : http://prometheus-kube-prometheus-prometheus.monitoring.svc.cluster.local:9090
 Loki : http://loki.monitoring.svc.cluster.local:3100
-🚨 Étape 7 — Déployer Falco (Sécurité Runtime)
-
+```
+--- 
+## 🚨 Étape 7 — Déployer Falco (Sécurité Runtime)
+```
 # Installer le driver kernel
 sudo apt install -y linux-headers-$(uname -r)
 curl -s https://falco.org/repo/falcosecurity-3672BA8F.asc | sudo apt-key add -
@@ -177,9 +183,10 @@ helm upgrade --install falco-agent falco/falco \
   --set falcosidekick.webui.enabled=true \
   --set tty=true
 🕵️‍♂️ Voir les alertes : sudo journalctl -fu falco 
-
-🔐 Étape 8 — Déployer HashiCorp Vault (Gestion des Secrets)
-
+```
+---
+## 🔐 Étape 8 — Déployer HashiCorp Vault (Gestion des Secrets)
+```
 # Créer un namespace
 kubectl create namespace vault
 
@@ -207,8 +214,10 @@ kubectl exec -n vault vault-0 -- sh -c 'vault write auth/kubernetes/config \
     token_reviewer_jwt="$(cat /var/run/secrets/kubernetes.io/serviceaccount/token)" \
     kubernetes_host="https://$KUBERNETES_PORT_443_TCP_ADDR:443" \
     kubernetes_ca_cert=@/var/run/secrets/kubernetes.io/serviceaccount/ca.crt'
-🧪 Étape 9 — Déployer OWASP Juice Shop (App Vulnérable)
-
+```
+---
+## 🧪 Étape 9 — Déployer OWASP Juice Shop (App Vulnérable)
+```
 kubectl create namespace apps
 
 kubectl create deployment juice-shop --image=bkimminich/juice-shop -n apps
@@ -217,9 +226,11 @@ kubectl expose deployment juice-shop --port=3000 --type=NodePort -n apps
 # Obtenir le port
 NODE_PORT=$(kubectl get svc juice-shop -n apps -o jsonpath='{.spec.ports[0].nodePort}')
 echo "Juice Shop disponible sur : http://$(hostname -I | awk '{print $1}'):${NODE_PORT}"
-🧰 Étape 10 — Intégrer les Outils dans GitLab CI (.gitlab-ci.yml)
+```
+--- 
+## 🧰 Étape 10 — Intégrer les Outils dans GitLab CI (.gitlab-ci.yml)
 Créez un projet dans GitLab → ajoutez un fichier .gitlab-ci.yml :
-
+```
 stages:
   - test
   - scan
@@ -281,17 +292,19 @@ deploy:
     - kubectl apply -f https://raw.githubusercontent.com/bkimminich/juice-shop/master/kubernetes/juice-shop.yaml -n apps
   rules:
     - if: $CI_COMMIT_BRANCH == "main"
-
-🎨 Étape 11 — Importer le Dashboard Grafana “Security Post-Deploy”
+```
+## 🎨 Étape 11 — Importer le Dashboard Grafana “Security Post-Deploy”
+```
 Allez sur Grafana → http://<IP>:30001
 Login : admin / Admin123!
 Configuration → Data Sources → ajoutez :
 Prometheus : http://prometheus-kube-prometheus-prometheus.monitoring.svc.cluster.local:9090
 Loki : http://loki.monitoring.svc.cluster.local:3100
 Create → Import → Collez le JSON du dashboard “Security Post-Deploy”
+```
 
-🧹 Étape 12 — Nettoyage & Sauvegarde
-
+## 🧹 Étape 12 — Nettoyage & Sauvegarde
+```
 # Supprimer tout le lab
 helm uninstall gitlab -n gitlab
 helm uninstall prometheus -n monitoring
@@ -301,6 +314,6 @@ helm uninstall grafana -n monitoring
 helm uninstall falco-agent -n monitoring
 helm uninstall vault -n vault
 kubectl delete namespace gitlab monitoring vault apps
-
+```
 # Supprimer k3s
 /usr/local/bin/k3s-uninstall.sh
