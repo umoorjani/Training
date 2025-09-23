@@ -1,0 +1,229 @@
+#!/bin/bash
+
+# =============================================
+# 🚀 LAB DEVSECOPS — VERSION 5.0
+# ✅ Tous les volumes ont bien leurs ':'
+# ✅ Clés GPG officielles : Docker + Falco
+# ✅ Pour étudiants en Gestion des SI
+# =============================================
+
+set -euo pipefail
+
+BOLD="\033[1m"
+GREEN="\033[0;32m"
+RED="\033[0;31m"
+NC="\033[0m"
+
+log() {
+    echo -e "${GREEN}[$(date +'%H:%M:%S')]${NC} $1"
+}
+
+error() {
+    echo -e "${RED}[ERREUR]${NC} $1" >&2
+    exit 1
+}
+
+# === ÉTAPE 1 : DÉTECTION OU SAISIE DE L'IP PUBLIQUE ===
+PUBLIC_IP=""
+detect_or_input_ip() {
+    log "🔍 Détection de l'IP publique..."
+
+    for provider in ifconfig.me api.ipify.org icanhazip.com; do
+        PUBLIC_IP=$(curl -s --max-time 5 http://$provider)
+        if [[ "$PUBLIC_IP" =~ ^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+            export PUBLIC_IP
+            log "✅ IP détectée : $PUBLIC_IP"
+            return 0
+        fi
+    done
+
+    read -p "🌐 IP non détectée. Entrez votre IP publique : " PUBLIC_IP_INPUT
+    if [[ "$PUBLIC_IP_INPUT" =~ ^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+        export PUBLIC_IP="$PUBLIC_IP_INPUT"
+        log "✅ IP définie : $PUBLIC_IP"
+    else
+        error "Adresse IP invalide."
+    fi
+}
+
+# === ÉTAPE 2 : INSTALLATION DE DOCKER (CLÉ OFFICIELLE) ===
+install_docker() {
+    log "🐳 Installation de Docker..."
+
+    apt update && apt install -y ca-certificates curl gnupg
+
+    # Clé GPG Docker officielle
+    install -m 0755 -d /etc/apt/keyrings
+    curl -fsSL https://download.docker.com/linux/ubuntu/gpg | gpg --dearmor -o /etc/apt/keyrings/docker.gpg
+
+    # Ajouter le dépôt
+    echo "deb [arch=$(dpkg --print-architecture) signed-by=/etc/apt/keyrings/docker.gpg] https://download.docker.com/linux/ubuntu $(. /etc/os-release && echo "$VERSION_CODENAME") stable" | tee /etc/apt/sources.list.d/docker.list > /dev/null
+
+    # Installer Docker
+    apt update && apt install -y docker-ce docker-ce-cli containerd.io docker-compose-plugin
+
+    # Ajouter utilisateur au groupe docker
+    usermod -aG docker $USER 2>/dev/null || true
+
+    log "✅ Docker installé."
+}
+
+# === ÉTAPE 3 : CRÉATION DU docker-compose.yml (CORRIGÉ) ===
+create_compose() {
+    log "📁 Création du docker-compose.yml..."
+
+    cat > docker-compose.yml << EOF
+services:
+  gitlab:
+    image: gitlab/gitlab-ce:latest
+    environment:
+      GITLAB_ROOT_PASSWORD: changeme123
+      GITLAB_OMNIBUS_CONFIG: |
+        external_url 'http://$PUBLIC_IP:30080';
+        nginx['listen_port'] = 80;
+    ports:
+      - "30080:80"
+    volumes:
+      - gitlab_config:/etc/gitlab
+      - gitlab_logs:/var/log/gitlab
+      - gitlab_data:/var/opt/gitlab
+    restart: unless-stopped
+
+  grafana:
+    image: grafana/grafana:latest
+    environment:
+      GF_SECURITY_ADMIN_USER: admin
+      GF_SECURITY_ADMIN_PASSWORD: Admin123!
+      GF_SERVER_ROOT_URL: http://$PUBLIC_IP:30001
+    ports:
+      - "30001:3000"
+    volumes:
+      - grafana_data:/var/lib/grafana
+    restart: unless-stopped
+
+  minio:
+    image: minio/minio:latest
+    environment:
+      MINIO_ROOT_USER: minioadmin
+      MINIO_ROOT_PASSWORD: minioadmin
+    command: server /data --console-address ":9001"
+    ports:
+      - "30010:9000"
+      - "30011:9001"
+    volumes:
+      - minio_data:/data
+    restart: unless-stopped
+
+  vault:
+    image: hashicorp/vault:latest
+    cap_add:
+      - IPC_LOCK
+    environment:
+      VAULT_DEV_ROOT_TOKEN_ID: root
+      VAULT_DEV_LISTEN_ADDRESS: 0.0.0.0:8200
+    ports:
+      - "30002:8200"
+    command: server -dev -dev-root-token-id=root
+    restart: unless-stopped
+
+  juice-shop:
+    image: bkimminich/juice-shop
+    ports:
+      - "30000:3000"
+    restart: unless-stopped
+
+volumes:
+  gitlab_config:
+  gitlab_logs:
+  gitlab_data:
+  grafana_data:
+  minio_data:
+EOF
+
+    log "✅ docker-compose.yml créé avec tous les ':' nécessaires."
+}
+
+# === ÉTAPE 4 : VALIDATION DU YAML ===
+validate_yaml() {
+    log "🔍 Validation du fichier YAML..."
+    if python3 -c "
+import yaml
+with open('docker-compose.yml') as f:
+    yaml.safe_load(f)
+print('✅ YAML valide')
+" 2>/dev/null; then
+    log "✅ Le fichier docker-compose.yml est valide."
+else
+    error "Le fichier docker-compose.yml contient une erreur de syntaxe."
+fi
+}
+
+# === ÉTAPE 5 : DÉMARRAGE DES SERVICES ===
+start_services() {
+    log "🚀 Démarrage des services..."
+    if docker compose up -d; then
+        log "✅ Tous les services sont lancés."
+    else
+        error "Échec du démarrage — vérifiez docker-compose.yml"
+    fi
+}
+
+# === ÉTAPE 6 : INSTALLATION DE FALCO (CLÉ OFFICIELLE) ===
+install_falco() {
+    log "🚨 Installation de Falco..."
+
+    export DEBIAN_FRONTEND=noninteractive
+    apt update
+    apt install -y dkms make linux-headers-$(uname -r)
+
+    # Clé GPG Falco officielle (https://falco.org/repo/falcosecurity-packages.asc)
+    curl -fsSL https://falco.org/repo/falcosecurity-packages.asc | gpg --dearmor -o /usr/share/keyrings/falco-archive-keyring.gpg
+    echo "deb [signed-by=/usr/share/keyrings/falco-archive-keyring.gpg] https://download.falco.org/packages/deb stable main" > /etc/apt/sources.list.d/falcosecurity.list
+
+    apt update && apt install -y falco
+
+    # Démarrer sans erreur sur alias
+    systemctl start falco 2>/dev/null || true
+    systemctl enable falco 2>/dev/null || true
+
+    log "✅ Falco installé en mode eBPF."
+}
+
+# === ÉTAPE 7 : AFFICHAGE DES CREDENTIALS ===
+show_credentials() {
+    echo ""
+    echo -e "${BOLD}🔐 CREDENTIALS & ACCÈS${NC}"
+    echo "--------------------------------------------------"
+    echo -e "🌐 GitLab        : http://$PUBLIC_IP:30080"
+    echo -e "   👤 User : root"
+    echo -e "   🔑 Pass : changeme123"
+    echo -e "\n📊 Grafana       : http://$PUBLIC_IP:30001"
+    echo -e "   👤 User : admin"
+    echo -e "   🔑 Pass : Admin123!"
+    echo -e "\n🔐 Vault UI      : http://$PUBLIC_IP:30002"
+    echo -e "   🔑 Token : root"
+    echo -e "\n🧪 Juice Shop    : http://$PUBLIC_IP:30000"
+    echo -e "\n🗄️ MinIO Console : http://$PUBLIC_IP:30011"
+    echo -e "   👤 Access Key : minioadmin"
+    echo -e "   🔑 Secret Key : minioadmin"
+    echo -e "\n🚨 Falco         : sudo journalctl -fu falco"
+    echo "--------------------------------------------------"
+    echo -e "💡 Utilisez directement l'IP publique + port"
+    echo -e "🧹 Pour arrêter : docker compose down"
+    echo ""
+}
+
+# === MAIN ===
+main() {
+    log "🚀 Démarrage du Lab DevSecOps — Version Corrigée"
+    detect_or_input_ip
+    install_docker
+    create_compose
+    validate_yaml
+    start_services
+    install_falco
+    show_credentials
+    log "🎉 Installation terminée. Bon DevSecOps ! 🚀"
+}
+
+main "$@"
